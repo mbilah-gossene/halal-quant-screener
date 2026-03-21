@@ -1049,18 +1049,7 @@ def render_stock_detail(r, tc, inf):
                     badge_text = T("na")
                     val_str = "—"
 
-                ratio_rows += f"""
-                <div class="ratio-row">
-                    <div class="rr-info">
-                        <div class="rr-name">{label}</div>
-                        <div class="rr-threshold">{T('fin_threshold', s=seuil)}</div>
-                    </div>
-                    <div class="rr-bar-wrap">
-                        <div class="rr-bar"><div class="rr-fill" style="width:{pct}%;background:{fill_color};"></div></div>
-                    </div>
-                    <div class="rr-value" style="color:{val_color};">{val_str}</div>
-                    <span class="rr-badge {badge_cls}">{badge_text}</span>
-                </div>"""
+                ratio_rows += f"""<div class="ratio-row"><div class="rr-info"><div class="rr-name">{label}</div><div class="rr-threshold">{T('fin_threshold', s=seuil)}</div></div><div class="rr-bar-wrap"><div class="rr-bar"><div class="rr-fill" style="width:{pct}%;background:{fill_color};"></div></div></div><div class="rr-value" style="color:{val_color};">{val_str}</div><span class="rr-badge {badge_cls}">{badge_text}</span></div>"""
 
             # D/E ratio extra
             der_v = r.get("D/E")
@@ -1070,31 +1059,15 @@ def render_stock_detail(r, tc, inf):
                 der_fill = "var(--sage)" if der_v <= SEUIL_DE * 0.6 else ("var(--honey)" if der_v <= SEUIL_DE else "var(--coral)")
                 der_badge_cls = "rr-badge-pass" if der_ok else "rr-badge-fail"
                 der_badge_text = T("pass") if der_ok else T("fail")
-                ratio_rows += f"""
-                <div class="ratio-row">
-                    <div class="rr-info">
-                        <div class="rr-name">D/E Ratio</div>
-                        <div class="rr-threshold">{T('fin_threshold', s=SEUIL_DE)}</div>
-                    </div>
-                    <div class="rr-bar-wrap">
-                        <div class="rr-bar"><div class="rr-fill" style="width:{der_pct}%;background:{der_fill};"></div></div>
-                    </div>
-                    <div class="rr-value" style="color:{der_fill};">{der_v}</div>
-                    <span class="rr-badge {der_badge_cls}">{der_badge_text}</span>
-                </div>"""
+                ratio_rows += f"""<div class="ratio-row"><div class="rr-info"><div class="rr-name">D/E Ratio</div><div class="rr-threshold">{T('fin_threshold', s=SEUIL_DE)}</div></div><div class="rr-bar-wrap"><div class="rr-bar"><div class="rr-fill" style="width:{der_pct}%;background:{der_fill};"></div></div></div><div class="rr-value" style="color:{der_fill};">{der_v}</div><span class="rr-badge {der_badge_cls}">{der_badge_text}</span></div>"""
 
-            st.markdown(f"""
-            <div class="screen-card">
-                <div class="sc-header">
-                    <div class="sc-title">
-                        <span class="sc-title-icon sci-fin">📊</span>
-                        {T('sec_financial')}
-                    </div>
-                    <span class="sc-badge {fin_badge_cls}">{fin_badge_text}</span>
-                </div>
-                {ratio_rows}
-            </div>
-            """, unsafe_allow_html=True)
+            st.markdown(f"""<div class="screen-card">
+<div class="sc-header">
+<div class="sc-title"><span class="sc-title-icon sci-fin">📊</span> {T('sec_financial')}</div>
+<span class="sc-badge {fin_badge_cls}">{fin_badge_text}</span>
+</div>
+{ratio_rows}
+</div>""", unsafe_allow_html=True)
 
     # ── SCORE SHARIA (Circular Gauge) ──
     if r["Score"] > 0:
@@ -1120,21 +1093,7 @@ def render_stock_detail(r, tc, inf):
         score_desc_en = "Inverse average of 5 financial ratios, with bonuses and penalties."
         score_desc = score_desc_fr if st.session_state.lang == "fr" else score_desc_en
 
-        st.markdown(f"""
-        <div class="score-ring-wrap">
-            <div class="score-ring" style="background:conic-gradient({sc_color} 0deg {deg}deg, var(--warm-200) {deg}deg 360deg);">
-                <div class="score-ring-inner">
-                    <span class="score-ring-val" style="color:{sc_color};">{sc_val}</span>
-                    <span class="score-ring-label">/ 100</span>
-                </div>
-            </div>
-            <div class="score-details">
-                <p><strong>{T('sec_score')}</strong></p>
-                <p>{score_desc}</p>
-                <div class="score-breakdown">{chips}</div>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown(f"""<div class="score-ring-wrap"><div class="score-ring" style="background:conic-gradient({sc_color} 0deg {deg}deg, var(--warm-200) {deg}deg 360deg);"><div class="score-ring-inner"><span class="score-ring-val" style="color:{sc_color};">{sc_val}</span><span class="score-ring-label">/ 100</span></div></div><div class="score-details"><p><strong>{T('sec_score')}</strong></p><p>{score_desc}</p><div class="score-breakdown">{chips}</div></div></div>""", unsafe_allow_html=True)
 
     # ── PURIFICATION ──
     purif = r.get("Purif.(%)")
