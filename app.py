@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import yfinance as yf
+import json
 import time
 from datetime import datetime
 
@@ -512,7 +513,7 @@ st.markdown(f"""
 # TABS
 # ══════════════════════════════════════════════════════
 
-t1,t2,t3,t4,t5,t6 = st.tabs(["📊  Screener","🔍  Recherche","💼  Portefeuille","⚡  Benchmark","📈  ETF Islamiques","📖  Methodologie"])
+t1,t2,t3,t4,t5,t6,t7 = st.tabs(["📊  Screener","🔍  Recherche","💼  Portefeuille","⚡  Benchmark","🔔  Alertes","📈  ETF Islamiques","📖  Methodologie"])
 
 # ── SCREENER ──
 with t1:
@@ -1143,7 +1144,172 @@ with t4:
                 <span class="hero-chip">Max Drawdown</span>
             </div>
         </div>""", unsafe_allow_html=True)
+
+# ── ALERTES DE CONFORMITE ──
 with t5:
+    st.markdown(f"""<p style="font-size:0.85rem;color:var(--ink-2);line-height:1.6;margin:0 0 14px;">
+        Detectez les changements de conformite Sharia entre deux analyses.
+        Lancez une nouvelle analyse, puis importez un fichier de resultats precedent pour voir quelles actions ont change de statut.
+    </p>""", unsafe_allow_html=True)
+
+    st.markdown(f'<div class="sdiv"><div class="sdiv-dot d-sage"></div><h3>Etape 1 — Importer les resultats precedents</h3></div>', unsafe_allow_html=True)
+    uploaded = st.file_uploader("Importez un fichier CSV ou JSON d'une analyse precedente (exporte depuis l'onglet Screener)", type=["csv", "json"])
+
+    prev_df = None
+    if uploaded:
+        try:
+            if uploaded.name.endswith(".csv"):
+                prev_df = pd.read_csv(uploaded)
+            else:
+                prev_df = pd.DataFrame(json.loads(uploaded.read().decode("utf-8")))
+            if "Statut" in prev_df.columns and "Nom" in prev_df.columns:
+                st.success(f"Fichier charge : {len(prev_df)} actions du {uploaded.name}")
+            else:
+                st.error("Fichier invalide — colonnes 'Statut' et 'Nom' requises.")
+                prev_df = None
+        except Exception as e:
+            st.error(f"Erreur de lecture : {e}")
+            prev_df = None
+
+    st.markdown(f'<div class="sdiv"><div class="sdiv-dot d-honey"></div><h3>Etape 2 — Lancer la nouvelle analyse</h3></div>', unsafe_allow_html=True)
+
+    if st.button("Analyser et comparer", type="primary", use_container_width=True):
+        pg = st.progress(0); sx = st.empty(); res = []
+        for i, (tk, nm) in enumerate(TICKERS.items()):
+            pg.progress((i + 1) / len(TICKERS))
+            sx.text(f"Analyse de {nm} ({tk}) — {i+1}/{len(TICKERS)}")
+            try:
+                to = yf.Ticker(tk); inf = to.info
+                if not inf or inf.get("quoteType") == "NONE": raise ValueError("No data")
+                res.append(analyze(tk, inf, to))
+            except:
+                pass
+            if (i + 1) % 12 == 0: time.sleep(1.5)
+        pg.empty(); sx.empty()
+
+        new_df = pd.DataFrame(res)
+        if "Statut" not in new_df.columns or len(new_df) == 0:
+            st.error("Impossible de recuperer les donnees. Reessayez dans quelques minutes.")
+        else:
+            # Show current snapshot
+            n_conf = len(new_df[new_df["Statut"] == "Conforme"])
+            n_nc = len(new_df[new_df["Statut"] == "Non conforme"])
+            n_h = len(new_df[new_df["Statut"] == "Haram"])
+            n_nd = len(new_df[new_df["Statut"] == "Donnees insuff."])
+
+            st.markdown(f"""<div class="kpis">
+                <div class="kpi k-sage"><div class="kv">{n_conf}</div><div class="kl">Conformes</div></div>
+                <div class="kpi k-honey"><div class="kv">{n_nc}</div><div class="kl">Non conformes</div></div>
+                <div class="kpi k-coral"><div class="kv">{n_h}</div><div class="kl">Haram</div></div>
+                <div class="kpi k-stone"><div class="kv">{n_nd}</div><div class="kl">Data insuff.</div></div>
+            </div>""", unsafe_allow_html=True)
+
+            if prev_df is not None:
+                # Compare
+                st.markdown(f'<div class="sdiv"><div class="sdiv-dot d-coral"></div><h3>Changements detectes</h3></div>', unsafe_allow_html=True)
+
+                # Build lookup by Ticker or Nom
+                key_col = "Ticker" if "Ticker" in prev_df.columns and "Ticker" in new_df.columns else "Nom"
+                prev_map = dict(zip(prev_df[key_col], prev_df["Statut"]))
+                new_map = dict(zip(new_df[key_col], new_df["Statut"]))
+
+                changes = []
+                # Actions that changed status
+                for key in set(prev_map.keys()) & set(new_map.keys()):
+                    old_s = prev_map[key]
+                    new_s = new_map[key]
+                    if old_s != new_s:
+                        nom = new_df[new_df[key_col] == key]["Nom"].values[0] if "Nom" in new_df.columns else key
+                        changes.append({
+                            "Action": nom,
+                            "Ticker": key if key_col == "Ticker" else "—",
+                            "Ancien statut": old_s,
+                            "Nouveau statut": new_s,
+                            "Alerte": "⬆️ Amelioration" if new_s == "Conforme" else ("⬇️ Degradation" if old_s == "Conforme" else "🔄 Changement")
+                        })
+
+                # New conformes (not in previous)
+                new_tickers = set(new_map.keys()) - set(prev_map.keys())
+                for key in new_tickers:
+                    nom = new_df[new_df[key_col] == key]["Nom"].values[0] if "Nom" in new_df.columns else key
+                    changes.append({
+                        "Action": nom, "Ticker": key if key_col == "Ticker" else "—",
+                        "Ancien statut": "Nouvelle", "Nouveau statut": new_map[key], "Alerte": "🆕 Nouvelle"
+                    })
+
+                if len(changes) > 0:
+                    changes_df = pd.DataFrame(changes)
+
+                    # Separate upgrades and downgrades
+                    upgrades = changes_df[changes_df["Alerte"].str.contains("Amelioration|Nouvelle")]
+                    downgrades = changes_df[changes_df["Alerte"].str.contains("Degradation")]
+                    other = changes_df[changes_df["Alerte"].str.contains("Changement")]
+
+                    nb_up = len(upgrades); nb_down = len(downgrades); nb_other = len(other)
+
+                    st.markdown(f"""<div class="kpis">
+                        <div class="kpi k-sage"><div class="kv">{nb_up}</div><div class="kl">Ameliorations</div></div>
+                        <div class="kpi k-coral"><div class="kv">{nb_down}</div><div class="kl">Degradations</div></div>
+                        <div class="kpi"><div class="kv" style="color:var(--ink);">{nb_other}</div><div class="kl">Autres changements</div></div>
+                        <div class="kpi"><div class="kv" style="color:var(--ink);">{len(changes)}</div><div class="kl">Total alertes</div></div>
+                    </div>""", unsafe_allow_html=True)
+
+                    if nb_down > 0:
+                        st.markdown(f"""<div class="callout" style="background:var(--coral-bg);border-color:rgba(194,68,29,0.12);">
+                            <span class="callout-icon">⚠️</span>
+                            <p style="color:var(--coral);"><strong>Attention :</strong> {nb_down} action(s) ont perdu leur conformite Sharia. Verifiez votre portefeuille.</p>
+                        </div>""", unsafe_allow_html=True)
+
+                    if nb_up > 0:
+                        st.markdown(f"""<div class="callout">
+                            <span class="callout-icon">✅</span>
+                            <p><strong>{nb_up} action(s) devenues conformes</strong> ou nouvellement analysees. Opportunites d'investissement potentielles.</p>
+                        </div>""", unsafe_allow_html=True)
+
+                    st.dataframe(changes_df, use_container_width=True, hide_index=True)
+
+                    st.download_button("📥  Rapport d'alertes CSV",
+                        changes_df.to_csv(index=False).encode("utf-8"),
+                        f"alertes_halal_{datetime.now().strftime('%Y%m%d')}.csv", "text/csv")
+                else:
+                    st.markdown(f"""<div class="callout">
+                        <span class="callout-icon">✅</span>
+                        <p><strong>Aucun changement detecte.</strong> Toutes les actions conservent leur statut de conformite.</p>
+                    </div>""", unsafe_allow_html=True)
+            else:
+                st.markdown(f"""<div class="callout">
+                    <span class="callout-icon">💡</span>
+                    <p><strong>Pas de fichier precedent importe.</strong> Exportez les resultats ci-dessous, puis reimportez-les lors de votre prochaine analyse pour detecter les changements.</p>
+                </div>""", unsafe_allow_html=True)
+
+            # Always offer to save current results
+            st.markdown("---")
+            dc1, dc2 = st.columns(2)
+            with dc1:
+                st.download_button("📥  Sauvegarder (CSV)",
+                    new_df.to_csv(index=False).encode("utf-8"),
+                    f"halal_quant_snapshot_{datetime.now().strftime('%Y%m%d')}.csv",
+                    "text/csv", use_container_width=True)
+            with dc2:
+                st.download_button("📥  Sauvegarder (JSON)",
+                    new_df.to_json(orient="records", indent=2).encode("utf-8"),
+                    f"halal_quant_snapshot_{datetime.now().strftime('%Y%m%d')}.json",
+                    "application/json", use_container_width=True)
+    else:
+        st.markdown(f"""<div class="hero-empty" style="padding:2.5rem;">
+            <div class="hero-icon">🔔</div>
+            <p class="hero-title">Alertes de conformite</p>
+            <p class="hero-sub">Importez vos resultats precedents, lancez une nouvelle analyse,<br>et detectez instantanement quelles actions ont change de statut Sharia.</p>
+            <div class="hero-chips">
+                <span class="hero-chip">Detection automatique</span>
+                <span class="hero-chip">Ameliorations & degradations</span>
+                <span class="hero-chip">Rapport exportable</span>
+                <span class="hero-chip">Suivi dans le temps</span>
+            </div>
+        </div>""", unsafe_allow_html=True)
+
+# ── ETF ISLAMIQUES ──
+with t6:
     st.markdown('<p style="font-size:0.82rem;color:var(--ink-3);margin:0 0 10px;">Comparez les principaux ETF conformes Sharia disponibles sur le marche.</p>', unsafe_allow_html=True)
     cf1,cf2,cf3 = st.columns(3)
     with cf1: zf=st.multiselect("Zone geographique", sorted(set(e["z"] for e in ETF_ISL.values())), default=sorted(set(e["z"] for e in ETF_ISL.values())))
@@ -1199,7 +1365,7 @@ with t5:
 
 
 # ── METHODOLOGIE ──
-with t6:
+with t7:
     st.markdown("### Comment fonctionne Halal Quant ?")
     st.markdown(f"""<p style="font-size:0.85rem;color:var(--ink-2);line-height:1.7;margin-bottom:1.5rem;">
         Halal Quant applique un pipeline sequentiel de <strong>10 niveaux de filtrage</strong> base sur les normes
