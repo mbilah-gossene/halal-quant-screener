@@ -761,7 +761,10 @@ with t3:
         pg.empty(); sx.empty()
 
         df_all = pd.DataFrame(res)
-        conformes = df_all[(df_all["Statut"] == "Conforme") & (df_all["Score"] >= score_min)].copy()
+        if "Statut" in df_all.columns and len(df_all) > 0:
+            conformes = df_all[(df_all["Statut"] == "Conforme") & (df_all["Score"] >= score_min)].copy()
+        else:
+            conformes = pd.DataFrame()
 
         if len(conformes) == 0:
             st.warning(f"Aucune action conforme avec un score >= {score_min}. Essayez de baisser le score minimum.")
@@ -950,11 +953,15 @@ with t4:
             if (i + 1) % 12 == 0: time.sleep(1.5)
 
         df_all = pd.DataFrame(res)
-        conformes = df_all[df_all["Statut"] == "Conforme"].sort_values("Score", ascending=False).head(bench_top)
+
+        if "Statut" in df_all.columns and len(df_all) > 0:
+            conformes = df_all[df_all["Statut"] == "Conforme"].sort_values("Score", ascending=False).head(bench_top)
+        else:
+            conformes = pd.DataFrame()
 
         if len(conformes) < 3:
             pg.empty(); sx.empty()
-            st.warning("Pas assez d'actions conformes pour construire un benchmark.")
+            st.warning("Pas assez d'actions conformes pour construire un benchmark. Yahoo Finance peut etre temporairement indisponible — reessayez dans quelques minutes.")
         else:
             # Step 2: Get historical data
             sx.text("Etape 2/3 — Recuperation des historiques de cours...")
