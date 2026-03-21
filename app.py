@@ -29,6 +29,7 @@ LANG = {
         "tab_alerts": "🔔  Alertes",
         "tab_etf": "📈  ETF Islamiques",
         "tab_method": "📖  Méthodologie",
+        "tab_learn": "📚  Apprendre",
         # Statuses
         "status_conforme": "Conforme",
         "status_non_conforme": "Non conforme",
@@ -160,6 +161,7 @@ LANG = {
         "tab_alerts": "🔔  Alerts",
         "tab_etf": "📈  Islamic ETFs",
         "tab_method": "📖  Methodology",
+        "tab_learn": "📚  Learn",
         "status_conforme": "Compliant",
         "status_non_conforme": "Non-compliant",
         "status_haram": "Haram",
@@ -1261,14 +1263,95 @@ with bc2:
 # TABS
 # ══════════════════════════════════════════════════════
 
-t1,t2,t3,t4,t5,t6,t7 = st.tabs([
+t1,t2,t3,t4,t5,t6,t7,t8 = st.tabs([
     T("tab_screener"), T("tab_search"), T("tab_portfolio"),
-    T("tab_benchmark"), T("tab_alerts"), T("tab_etf"), T("tab_method")
+    T("tab_benchmark"), T("tab_alerts"), T("tab_etf"), T("tab_learn"), T("tab_method")
 ])
 
 # ══════════════════════════════════════════════════════
-# TAB 1 — SCREENER
+# TAB 1 — SCREENER (PHASE 2 REDESIGN)
 # ══════════════════════════════════════════════════════
+
+def svg_donut(n_co, n_nc, n_ha, n_nd, size=160):
+    """Generate SVG donut chart for compliance distribution."""
+    total = n_co + n_nc + n_ha + n_nd
+    if total == 0:
+        return ""
+    r = size / 2 - 10
+    cx = cy = size / 2
+    circumference = 2 * 3.14159 * r
+
+    segments = [
+        (n_co / total, "#2D7A5F", T("conformes")),
+        (n_nc / total, "#B8860B", T("non_conformes")),
+        (n_ha / total, "#C2442D", T("haram")),
+        (n_nd / total, "#6B6B65", T("data_insuff")),
+    ]
+    counts = [n_co, n_nc, n_ha, n_nd]
+
+    arcs = ""
+    offset = 0
+    for i, (pct, color, label) in enumerate(segments):
+        if pct <= 0:
+            continue
+        dash = pct * circumference
+        gap = circumference - dash
+        arcs += f'<circle cx="{cx}" cy="{cy}" r="{r}" fill="none" stroke="{color}" stroke-width="22" stroke-dasharray="{dash:.1f} {gap:.1f}" stroke-dashoffset="-{offset:.1f}" stroke-linecap="round" />'
+        offset += dash
+
+    # Legend
+    legend = ""
+    for i, (pct, color, label) in enumerate(segments):
+        if counts[i] == 0:
+            continue
+        legend += f'<div style="display:flex;align-items:center;gap:6px;"><div style="width:10px;height:10px;border-radius:50%;background:{color};flex-shrink:0;"></div><span style="font-size:0.72rem;color:var(--ink-2);">{label}</span><span style="font-size:0.72rem;font-weight:700;color:var(--ink);margin-left:auto;">{counts[i]} ({round(pct*100)}%)</span></div>'
+
+    return f"""<div style="display:flex;align-items:center;gap:24px;padding:20px 24px;background:var(--white);border:1px solid var(--warm-200);border-radius:16px;box-shadow:var(--shadow-sm);margin:14px 0;">
+<svg width="{size}" height="{size}" viewBox="0 0 {size} {size}" style="flex-shrink:0;transform:rotate(-90deg);"><circle cx="{cx}" cy="{cy}" r="{r}" fill="none" stroke="var(--warm-200)" stroke-width="22" />{arcs}<text x="{cx}" y="{cx}" text-anchor="middle" dominant-baseline="central" style="font-family:'Source Code Pro',monospace;font-size:1.6rem;font-weight:800;fill:var(--ink);transform:rotate(90deg);transform-origin:center;">{total}</text></svg>
+<div style="flex:1;display:flex;flex-direction:column;gap:8px;">{legend}</div>
+</div>"""
+
+
+def render_stock_table(df_section, columns, status_type="conforme"):
+    """Render an HTML table with colored badges."""
+    if len(df_section) == 0:
+        return
+
+    badge_map = {
+        "Conforme": ("var(--sage-light)", "var(--sage)"),
+        "Non conforme": ("var(--honey-light)", "var(--honey)"),
+        "Haram": ("var(--coral-light)", "var(--coral)"),
+        "Donnees insuff.": ("var(--stone-light)", "var(--stone)"),
+    }
+
+    # Build header
+    header = "".join(f'<th style="padding:8px 10px;font-size:0.6rem;color:var(--ink-4);text-transform:uppercase;letter-spacing:0.5px;font-weight:700;text-align:left;white-space:nowrap;border-bottom:2px solid var(--warm-200);">{c}</th>' for c in columns)
+
+    # Build rows
+    rows = ""
+    for _, row in df_section.iterrows():
+        cells = ""
+        for c in columns:
+            val = row.get(c, "—")
+            if c == "Statut":
+                bg, fg = badge_map.get(val, ("var(--stone-light)", "var(--stone)"))
+                cells += f'<td style="padding:8px 10px;"><span style="font-size:0.6rem;font-weight:700;padding:3px 8px;border-radius:20px;background:{bg};color:{fg};">{val}</span></td>'
+            elif c == "Score":
+                sc = val if isinstance(val, (int, float)) else 0
+                sc_color = "var(--sage)" if sc >= 70 else ("var(--honey)" if sc >= 40 else "var(--coral)")
+                cells += f'<td style="padding:8px 10px;font-family:Source Code Pro,monospace;font-weight:700;color:{sc_color};">{int(sc) if isinstance(sc,(int,float)) else "—"}</td>'
+            elif c == "Nom":
+                cells += f'<td style="padding:8px 10px;font-weight:700;color:var(--ink);font-size:0.78rem;">{val}</td>'
+            elif c in ["Prix","Cap.(M€)","Dette/Cap(%)","Cash+Inv/Cap(%)","Creances/Cap(%)"]:
+                cells += f'<td style="padding:8px 10px;font-family:Source Code Pro,monospace;font-size:0.75rem;color:var(--ink-2);">{val}</td>'
+            else:
+                display = str(val)[:30] if len(str(val)) > 30 else str(val)
+                cells += f'<td style="padding:8px 10px;font-size:0.72rem;color:var(--ink-3);">{display}</td>'
+        rows += f'<tr style="border-bottom:1px solid var(--warm-100);transition:background 0.15s;">{cells}</tr>'
+
+    html = f"""<div style="overflow-x:auto;border:1px solid var(--warm-200);border-radius:12px;background:var(--white);box-shadow:var(--shadow-sm);"><table style="width:100%;border-collapse:collapse;"><thead><tr>{header}</tr></thead><tbody>{rows}</tbody></table></div>"""
+    st.markdown(html, unsafe_allow_html=True)
+
 
 with t1:
     if st.button(T("screener_launch"), type="primary", use_container_width=True):
@@ -1296,50 +1379,95 @@ with t1:
         pg.empty(); sx.empty()
 
         df=pd.DataFrame(res)
-        # Cache results for alternatives feature
         st.session_state.screener_results = df
 
         co=df[df["Statut"]=="Conforme"]; nc=df[df["Statut"]=="Non conforme"]
         ha=df[df["Statut"]=="Haram"]; nd=df[df["Statut"]=="Donnees insuff."]
         gr=co[co["Attention"]!=""]
 
-        # KPIs
-        st.markdown(f"""<div class="kpis">
-            <div class="kpi k-sky"><div class="kv">{len(df)}</div><div class="kl">{T('analyzed')}</div></div>
-            <div class="kpi k-sage"><div class="kv">{len(co)}</div><div class="kl">{T('conformes')}</div></div>
-            <div class="kpi k-honey"><div class="kv">{len(nc)}</div><div class="kl">{T('non_conformes')}</div></div>
-            <div class="kpi k-coral"><div class="kv">{len(ha)}</div><div class="kl">{T('haram')}</div></div>
-            <div class="kpi k-stone"><div class="kv">{len(nd)}</div><div class="kl">{T('data_insuff')}</div></div>
-            <div class="kpi"><div class="kv" style="color:var(--honey);">{len(gr)}</div><div class="kl">{T('gray_zones')}</div></div>
-        </div>""", unsafe_allow_html=True)
+        # ── DONUT + KPIs side by side ──
+        donut_col, kpi_col = st.columns([1, 2])
+        with donut_col:
+            st.markdown(svg_donut(len(co), len(nc), len(ha), len(nd)), unsafe_allow_html=True)
+        with kpi_col:
+            st.markdown(f"""<div class="kpis">
+<div class="kpi k-sky"><div class="kv">{len(df)}</div><div class="kl">{T('analyzed')}</div></div>
+<div class="kpi k-sage"><div class="kv">{len(co)}</div><div class="kl">{T('conformes')}</div></div>
+<div class="kpi k-honey"><div class="kv">{len(nc)}</div><div class="kl">{T('non_conformes')}</div></div>
+<div class="kpi k-coral"><div class="kv">{len(ha)}</div><div class="kl">{T('haram')}</div></div>
+<div class="kpi k-stone"><div class="kv">{len(nd)}</div><div class="kl">{T('data_insuff')}</div></div>
+<div class="kpi"><div class="kv" style="color:var(--honey);">{len(gr)}</div><div class="kl">{T('gray_zones')}</div></div>
+</div>""", unsafe_allow_html=True)
 
-        # Conformes
-        st.markdown(f'<div class="sdiv"><div class="sdiv-dot d-sage"></div><h3>{T("compliant_stocks")}</h3><span class="sdiv-cnt">{len(co)}</span></div>', unsafe_allow_html=True)
-        if len(co)>0:
-            st.dataframe(co.sort_values("Score",ascending=False)[["Nom","Score","Data","Trim.","Prix","Cap.(M€)","Cap.type",
-                "PER","Div.(%)","ROE(%)","Marge op.(%)","Marge nette(%)","Beta","D/E","Current Ratio","FCF(M€)",
-                "Dette/Cap(%)","Cash+Inv/Cap(%)","Creances/Cap(%)","Charges int.(%)","Purif.(%)","Secteur","Attention"]],
-                use_container_width=True, hide_index=True, height=min(600,50+len(co)*35))
+        # ── FILTERS ──
+        st.markdown(f'<div class="sdiv"><div class="sdiv-dot d-sky"></div><h3>{"Filtres" if st.session_state.lang=="fr" else "Filters"}</h3></div>', unsafe_allow_html=True)
+        fc1, fc2, fc3 = st.columns(3)
+        with fc1:
+            status_options = ["Conforme", "Non conforme", "Haram", "Donnees insuff."]
+            status_labels = [T("status_conforme"), T("status_non_conforme"), T("status_haram"), T("status_nodata")]
+            sel_status = st.multiselect(
+                "Statut" if st.session_state.lang == "fr" else "Status",
+                options=status_options,
+                default=["Conforme"],
+                format_func=lambda x: status_labels[status_options.index(x)]
+            )
+        with fc2:
+            all_sectors = sorted(df["Secteur"].unique().tolist())
+            sel_sectors = st.multiselect(
+                T("sector"),
+                options=all_sectors,
+                default=all_sectors
+            )
+        with fc3:
+            score_range = st.slider(
+                T("sec_score"),
+                min_value=0, max_value=100, value=(0, 100)
+            )
+
+        # Apply filters
+        df_filtered = df[
+            (df["Statut"].isin(sel_status)) &
+            (df["Secteur"].isin(sel_sectors)) &
+            (df["Score"].apply(lambda x: score_range[0] <= (x if isinstance(x, (int, float)) else 0) <= score_range[1]))
+        ].copy()
+
+        # ── RESULTS TABLE ──
+        n_results = len(df_filtered)
+        st.markdown(f'<div class="sdiv"><div class="sdiv-dot d-sage"></div><h3>{"Résultats" if st.session_state.lang=="fr" else "Results"}</h3><span class="sdiv-cnt">{n_results}</span></div>', unsafe_allow_html=True)
+
+        if n_results > 0:
+            display_df = df_filtered.sort_values("Score", ascending=False)
+            render_stock_table(
+                display_df,
+                ["Nom", "Statut", "Score", "Prix", "Cap.(M€)", "Secteur", "Dette/Cap(%)", "Purif.(%)", "Raison"]
+            )
+
+            # ── STOCK DETAIL VIEWER ──
+            st.markdown(f'<div class="sdiv"><div class="sdiv-dot d-sage"></div><h3>{"Voir le détail d\'une action" if st.session_state.lang=="fr" else "View stock details"}</h3></div>', unsafe_allow_html=True)
+
+            stock_options = display_df["Nom"].tolist()
+            selected_stock = st.selectbox(
+                "Action" if st.session_state.lang == "fr" else "Stock",
+                options=["—"] + stock_options,
+                label_visibility="collapsed"
+            )
+
+            if selected_stock != "—":
+                stock_row = display_df[display_df["Nom"] == selected_stock].iloc[0]
+                ticker = stock_row["Ticker"]
+                with st.spinner(f"{'Chargement de' if st.session_state.lang=='fr' else 'Loading'} {selected_stock}..."):
+                    try:
+                        to = yf.Ticker(ticker)
+                        inf = to.info
+                        r_detail = analyze(ticker, inf, to)
+                        render_stock_detail(r_detail, ticker, inf)
+                    except:
+                        # Use cached data
+                        render_stock_detail(stock_row.to_dict(), ticker, {})
         else:
-            st.info("Aucune action conforme trouvee." if st.session_state.lang=="fr" else "No compliant stocks found.")
+            st.info("Aucun résultat avec ces filtres." if st.session_state.lang == "fr" else "No results with these filters.")
 
-        # Non conformes
-        st.markdown(f'<div class="sdiv"><div class="sdiv-dot d-honey"></div><h3>{T("non_conformes")}</h3><span class="sdiv-cnt">{len(nc)}</span></div>', unsafe_allow_html=True)
-        if len(nc)>0:
-            st.dataframe(nc[["Nom","Raison","Prix","Cap.(M€)","Dette/Cap(%)","Cash+Inv/Cap(%)","Creances/Cap(%)","Rev.haram(%)","Charges int.(%)","D/E","Secteur","Niveaux"]],
-                use_container_width=True, hide_index=True)
-
-        # Haram
-        st.markdown(f'<div class="sdiv"><div class="sdiv-dot d-coral"></div><h3>{T("haram")}</h3><span class="sdiv-cnt">{len(ha)}</span></div>', unsafe_allow_html=True)
-        if len(ha)>0:
-            st.dataframe(ha[["Nom","Raison","Secteur","Industrie","Niveaux"]], use_container_width=True, hide_index=True)
-
-        # Data insuff.
-        if len(nd)>0:
-            st.markdown(f'<div class="sdiv"><div class="sdiv-dot d-stone"></div><h3>{T("data_insuff")}</h3><span class="sdiv-cnt">{len(nd)}</span></div>', unsafe_allow_html=True)
-            st.dataframe(nd[["Nom","Ticker","Raison","Data"]], use_container_width=True, hide_index=True)
-
-        # Downloads
+        # ── DOWNLOADS ──
         st.markdown("---")
         c1,c2,c3 = st.columns(3)
         with c1: st.download_button(T("download_csv"), df.to_csv(index=False).encode("utf-8"), f"halal_quant_{datetime.now().strftime('%Y%m%d')}.csv", "text/csv", use_container_width=True)
@@ -1803,10 +1931,133 @@ with t6:
 
 
 # ══════════════════════════════════════════════════════
-# TAB 7 — METHODOLOGIE
+# TAB 7 — APPRENDRE / LEARN (PHASE 3)
 # ══════════════════════════════════════════════════════
 
 with t7:
+    fr = st.session_state.lang == "fr"
+
+    # ── EDUCATIONAL CARDS ──
+    learn_cards = [
+        {
+            "icon": "☪️",
+            "title_fr": "Qu'est-ce que l'investissement halal ?",
+            "title_en": "What is Halal Investing?",
+            "body_fr": "L'investissement halal consiste à placer son argent dans des actifs conformes aux principes de la Sharia islamique. Cela signifie éviter les entreprises dont l'activité principale est interdite (alcool, jeux de hasard, tabac, armes, finance conventionnelle, porc) et s'assurer que les ratios financiers de l'entreprise respectent certains seuils — notamment en matière de dette, de revenus d'intérêts et de liquidités. L'objectif est d'investir de manière éthique tout en cherchant la performance financière.",
+            "body_en": "Halal investing means putting your money into assets that comply with Islamic Shariah principles. This means avoiding companies whose core business is prohibited (alcohol, gambling, tobacco, weapons, conventional finance, pork) and ensuring the company's financial ratios meet certain thresholds — particularly regarding debt, interest income, and liquidity. The goal is to invest ethically while seeking financial performance.",
+            "color": "var(--sage)",
+        },
+        {
+            "icon": "📊",
+            "title_fr": "Comment fonctionne le screening AAOIFI ?",
+            "title_en": "How Does AAOIFI Screening Work?",
+            "body_fr": "Le screening AAOIFI est un processus en deux étapes. <strong>Étape 1 — Business Activity Screening :</strong> On vérifie que l'activité principale de l'entreprise n'est pas haram. Les secteurs comme la banque, l'alcool, le tabac et les jeux sont automatiquement exclus. <strong>Étape 2 — Financial Screening :</strong> On analyse 5 ratios financiers clés : dette/capitalisation (< 33%), cash+investissements/capitalisation (< 33%), créances/capitalisation (< 49%), revenus haram/CA (< 5%), et charges d'intérêts/CA (< 5%). Tous les ratios sont calculés sur la capitalisation boursière moyenne des 12 derniers mois.",
+            "body_en": "AAOIFI screening is a two-step process. <strong>Step 1 — Business Activity Screening:</strong> We verify the company's core activity is not haram. Sectors like banking, alcohol, tobacco, and gambling are automatically excluded. <strong>Step 2 — Financial Screening:</strong> We analyze 5 key financial ratios: debt/market cap (< 33%), cash+investments/market cap (< 33%), receivables/market cap (< 49%), haram revenue/revenue (< 5%), and interest expense/revenue (< 5%). All ratios are calculated on the 12-month average market capitalization.",
+            "color": "var(--sky)",
+        },
+        {
+            "icon": "🕌",
+            "title_fr": "Qu'est-ce que la purification ?",
+            "title_en": "What is Purification?",
+            "body_fr": "Même une action conforme peut avoir une petite proportion de revenus non conformes (par exemple, des intérêts bancaires sur la trésorerie). La <strong>purification</strong> consiste à reverser en charité (sadaqa) la part de vos dividendes correspondant à ces revenus haram. Par exemple, si une entreprise a 2% de revenus haram et vous verse 100€ de dividendes, vous devez reverser 2€ en sadaqa. Halal Quant calcule automatiquement ce pourcentage pour chaque action.",
+            "body_en": "Even a compliant stock may have a small proportion of non-compliant revenue (e.g., bank interest on cash). <strong>Purification</strong> means donating the portion of your dividends corresponding to haram revenue to charity (sadaqah). For example, if a company has 2% haram revenue and pays you €100 in dividends, you should donate €2 to charity. Halal Quant automatically calculates this percentage for each stock.",
+            "color": "var(--honey)",
+        },
+        {
+            "icon": "🇫🇷",
+            "title_fr": "PEA vs CTO : quelle enveloppe pour un investisseur musulman ?",
+            "title_en": "PEA vs CTO: Which Account for a Muslim Investor?",
+            "body_fr": "<strong>PEA (Plan d'Épargne en Actions)</strong> : Réservé aux actions européennes. Après 5 ans, les plus-values sont exonérées d'impôt sur le revenu (17.2% de prélèvements sociaux restent). <strong>Idéal pour le stock picking halal sur Euronext Paris</strong> — c'est exactement ce que fait Halal Quant. <strong>CTO (Compte Titres Ordinaire)</strong> : Permet d'investir dans le monde entier, y compris les ETF islamiques (ISWD.L, HLAL, etc.). Fiscalité standard (flat tax 30%). <strong>Stratégie optimale</strong> : PEA pour les actions Euronext conformes (0% de frais, avantage fiscal) + CTO pour un ETF MSCI World Islamic (diversification mondiale).",
+            "body_en": "<strong>PEA</strong>: Reserved for European stocks. After 5 years, capital gains are income-tax-free (17.2% social charges remain). <strong>Perfect for halal stock picking on Euronext Paris</strong> — exactly what Halal Quant does. <strong>CTO</strong>: Allows investing worldwide, including Islamic ETFs (ISWD.L, HLAL, etc.). Standard taxation (30% flat tax). <strong>Optimal strategy</strong>: PEA for compliant Euronext stocks (0% fees, tax advantage) + CTO for an MSCI World Islamic ETF (global diversification).",
+            "color": "var(--sage)",
+        },
+        {
+            "icon": "📐",
+            "title_fr": "Qu'est-ce que la Zakat sur les investissements ?",
+            "title_en": "What is Zakat on Investments?",
+            "body_fr": "La <strong>Zakat</strong> est un pilier de l'Islam qui impose de reverser 2.5% de sa richesse annuelle aux nécessiteux. Pour les investissements en actions, la Zakat se calcule sur la <strong>valeur de marché de votre portefeuille</strong> à la date anniversaire (hawl). Si votre portefeuille dépasse le <strong>nisab</strong> (environ 5 900€ en 2024, soit 85g d'or), vous devez 2.5% de sa valeur totale. Utilisez le calculateur ci-dessous pour estimer votre Zakat.",
+            "body_en": "<strong>Zakat</strong> is a pillar of Islam requiring you to give 2.5% of your annual wealth to those in need. For stock investments, Zakat is calculated on the <strong>market value of your portfolio</strong> on the anniversary date (hawl). If your portfolio exceeds the <strong>nisab</strong> (approximately €5,900 in 2024, i.e., 85g of gold), you owe 2.5% of its total value. Use the calculator below to estimate your Zakat.",
+            "color": "var(--sky)",
+        },
+    ]
+
+    for card in learn_cards:
+        title = card["title_fr"] if fr else card["title_en"]
+        body = card["body_fr"] if fr else card["body_en"]
+        st.markdown(f"""<div style="background:var(--white);border:1px solid var(--warm-200);border-radius:16px;padding:24px;margin:12px 0;box-shadow:var(--shadow-sm);border-left:4px solid {card['color']};">
+<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;"><span style="font-size:1.5rem;">{card['icon']}</span><strong style="font-size:0.95rem;color:var(--ink);">{title}</strong></div>
+<p style="font-size:0.8rem;color:var(--ink-2);line-height:1.7;margin:0;">{body}</p>
+</div>""", unsafe_allow_html=True)
+
+    # ── ZAKAT CALCULATOR ──
+    st.markdown("---")
+    st.markdown(f'<div class="sdiv"><div class="sdiv-dot d-sage"></div><h3>{"Calculateur de Zakat" if fr else "Zakat Calculator"}</h3></div>', unsafe_allow_html=True)
+
+    st.markdown(f"""<p style="font-size:0.8rem;color:var(--ink-2);line-height:1.6;margin:0 0 14px;">
+        {"Estimez la Zakat due sur vos investissements. Le nisab est le seuil minimum de richesse à partir duquel la Zakat est obligatoire (équivalent de 85g d'or)." if fr
+        else "Estimate the Zakat due on your investments. The nisab is the minimum wealth threshold above which Zakat becomes obligatory (equivalent to 85g of gold)."}
+    </p>""", unsafe_allow_html=True)
+
+    zc1, zc2, zc3 = st.columns(3)
+    with zc1:
+        z_portfolio = st.number_input(
+            "Valeur du portefeuille (€)" if fr else "Portfolio value (€)",
+            min_value=0, max_value=10000000, value=10000, step=500
+        )
+    with zc2:
+        z_cash = st.number_input(
+            "Liquidités / épargne (€)" if fr else "Cash / savings (€)",
+            min_value=0, max_value=10000000, value=5000, step=500
+        )
+    with zc3:
+        z_gold_price = st.number_input(
+            "Prix de l'or au gramme (€)" if fr else "Gold price per gram (€)",
+            min_value=30, max_value=200, value=75, step=1
+        )
+
+    z_debts = st.number_input(
+        "Dettes à déduire (€)" if fr else "Debts to deduct (€)",
+        min_value=0, max_value=10000000, value=0, step=500
+    )
+
+    # Calculate
+    nisab = z_gold_price * 85
+    z_total_wealth = z_portfolio + z_cash - z_debts
+    z_above_nisab = z_total_wealth >= nisab
+    z_zakat = round(z_total_wealth * 0.025, 2) if z_above_nisab else 0
+
+    # Display results
+    if z_above_nisab:
+        zakat_color = "var(--sage)"
+        zakat_msg_fr = f"Votre richesse nette ({z_total_wealth:,.0f}€) dépasse le nisab ({nisab:,.0f}€). Votre Zakat est de <strong>{z_zakat:,.2f}€</strong>."
+        zakat_msg_en = f"Your net wealth (€{z_total_wealth:,.0f}) exceeds the nisab (€{nisab:,.0f}). Your Zakat is <strong>€{z_zakat:,.2f}</strong>."
+    else:
+        zakat_color = "var(--ink-3)"
+        zakat_msg_fr = f"Votre richesse nette ({z_total_wealth:,.0f}€) est inférieure au nisab ({nisab:,.0f}€). Pas de Zakat obligatoire."
+        zakat_msg_en = f"Your net wealth (€{z_total_wealth:,.0f}) is below the nisab (€{nisab:,.0f}). No Zakat is obligatory."
+
+    st.markdown(f"""<div class="kpis">
+<div class="kpi k-sage"><div class="kv">{z_total_wealth:,.0f}€</div><div class="kl">{"Richesse nette" if fr else "Net Wealth"}</div></div>
+<div class="kpi"><div class="kv" style="color:var(--honey);">{nisab:,.0f}€</div><div class="kl">Nisab (85g {"d'or" if fr else "gold"})</div></div>
+<div class="kpi"><div class="kv" style="color:{zakat_color};">{z_zakat:,.2f}€</div><div class="kl">Zakat (2.5%)</div></div>
+</div>""", unsafe_allow_html=True)
+
+    st.markdown(f"""<div class="callout"><span class="callout-icon">{"🕌" if z_above_nisab else "💡"}</span><p>{zakat_msg_fr if fr else zakat_msg_en}</p></div>""", unsafe_allow_html=True)
+
+    # Zakat with purification
+    if z_above_nisab and z_portfolio > 0:
+        st.markdown(f"""<div style="background:var(--white);border:1px solid var(--warm-200);border-radius:12px;padding:16px 20px;margin:10px 0;">
+<p style="font-size:0.78rem;color:var(--ink-2);line-height:1.6;margin:0;">
+{"<strong>Rappel :</strong> La Zakat et la purification sont deux obligations distinctes. La <strong>Zakat</strong> (2.5%) est calculée sur la valeur totale de votre patrimoine. La <strong>purification</strong> est calculée sur les dividendes reçus, proportionnellement aux revenus haram de l'entreprise. Les deux doivent être payées séparément." if fr
+else "<strong>Reminder:</strong> Zakat and purification are two separate obligations. <strong>Zakat</strong> (2.5%) is calculated on your total wealth. <strong>Purification</strong> is calculated on received dividends, proportional to the company's haram revenue. Both must be paid separately."}
+</p></div>""", unsafe_allow_html=True)
+
+
+# ══════════════════════════════════════════════════════
+# TAB 8 — METHODOLOGIE
+# ══════════════════════════════════════════════════════
+
+with t8:
     st.markdown(f"### {'Comment fonctionne Halal Quant ?' if st.session_state.lang=='fr' else 'How does Halal Quant work?'}")
     st.markdown(f"""<p style="font-size:0.85rem;color:var(--ink-2);line-height:1.7;margin-bottom:1.5rem;">
         {'Halal Quant applique un pipeline séquentiel de <strong>10 niveaux de filtrage</strong> basé sur les normes <strong>AAOIFI</strong>.' if st.session_state.lang=='fr'
