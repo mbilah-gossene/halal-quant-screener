@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import yfinance as yf
 import time
 from datetime import datetime
@@ -511,7 +512,7 @@ st.markdown(f"""
 # TABS
 # ══════════════════════════════════════════════════════
 
-t1,t2,t3,t4,t5 = st.tabs(["📊  Screener","🔍  Recherche","💼  Portefeuille","📈  ETF Islamiques","📖  Methodologie"])
+t1,t2,t3,t4,t5,t6 = st.tabs(["📊  Screener","🔍  Recherche","💼  Portefeuille","⚡  Benchmark","📈  ETF Islamiques","📖  Methodologie"])
 
 # ── SCREENER ──
 with t1:
@@ -917,8 +918,225 @@ with t3:
         </div>""", unsafe_allow_html=True)
 
 
-# ── ETF ISLAMIQUES ──
+# ── BENCHMARK ──
 with t4:
+    st.markdown(f"""<p style="font-size:0.85rem;color:var(--ink-2);line-height:1.6;margin:0 0 14px;">
+        Comparez la performance d'un portefeuille halal Euronext (construit par notre screener) face a l'ETF
+        <strong>iShares MSCI World Islamic</strong> (ISWD.L) — le benchmark de reference en investissement islamique.
+    </p>""", unsafe_allow_html=True)
+
+    bc1, bc2, bc3 = st.columns(3)
+    with bc1:
+        bench_period = st.selectbox("Periode", ["6mo", "1y", "2y"], index=1, format_func=lambda x: {"6mo":"6 mois","1y":"1 an","2y":"2 ans"}[x])
+    with bc2:
+        bench_top = st.slider("Top N actions conformes", 5, 25, 10)
+    with bc3:
+        bench_weight = st.selectbox("Ponderation", ["Equiponderation", "Score Sharia"])
+
+    if st.button("Lancer le benchmark", type="primary", use_container_width=True):
+        pg = st.progress(0); sx = st.empty()
+
+        # Step 1: Get conformes
+        sx.text("Etape 1/3 — Analyse des actions Euronext...")
+        res = []
+        for i, (tk, nm) in enumerate(TICKERS.items()):
+            pg.progress((i + 1) / len(TICKERS) * 0.5)
+            try:
+                to = yf.Ticker(tk); inf = to.info
+                if not inf or inf.get("quoteType") == "NONE": raise ValueError("No data")
+                res.append(analyze(tk, inf, to))
+            except:
+                pass
+            if (i + 1) % 12 == 0: time.sleep(1.5)
+
+        df_all = pd.DataFrame(res)
+        conformes = df_all[df_all["Statut"] == "Conforme"].sort_values("Score", ascending=False).head(bench_top)
+
+        if len(conformes) < 3:
+            pg.empty(); sx.empty()
+            st.warning("Pas assez d'actions conformes pour construire un benchmark.")
+        else:
+            # Step 2: Get historical data
+            sx.text("Etape 2/3 — Recuperation des historiques de cours...")
+            pg.progress(0.55)
+
+            # ETF benchmark
+            try:
+                etf_hist = yf.Ticker("ISWD.L").history(period=bench_period)
+                if len(etf_hist) < 10:
+                    raise ValueError("Pas assez de donnees ETF")
+                etf_returns = etf_hist["Close"].pct_change().dropna()
+                etf_cumul = (1 + etf_returns).cumprod()
+                etf_ok = True
+            except:
+                etf_ok = False
+
+            # Portfolio stocks
+            sx.text("Etape 3/3 — Calcul des performances...")
+            pg.progress(0.7)
+
+            tickers_conf = conformes["Ticker"].tolist()
+            scores_conf = conformes.set_index("Ticker")["Score"].to_dict()
+
+            stock_returns = {}
+            for j, tk in enumerate(tickers_conf):
+                pg.progress(0.7 + 0.3 * (j + 1) / len(tickers_conf))
+                try:
+                    h = yf.Ticker(tk).history(period=bench_period)
+                    if len(h) > 10:
+                        stock_returns[tk] = h["Close"].pct_change().dropna()
+                except:
+                    pass
+                if (j + 1) % 5 == 0: time.sleep(1)
+
+            pg.empty(); sx.empty()
+
+            if len(stock_returns) < 3:
+                st.warning("Pas assez de donnees historiques pour les actions conformes.")
+            else:
+                # Build portfolio returns
+                returns_df = pd.DataFrame(stock_returns)
+                returns_df = returns_df.dropna(how="all")
+
+                if bench_weight == "Score Sharia":
+                    weights = {}
+                    total_s = sum(scores_conf.get(tk, 50) for tk in returns_df.columns)
+                    for tk in returns_df.columns:
+                        weights[tk] = scores_conf.get(tk, 50) / total_s
+                else:
+                    n = len(returns_df.columns)
+                    weights = {tk: 1/n for tk in returns_df.columns}
+
+                # Weighted portfolio daily return
+                ptf_daily = sum(returns_df[tk].fillna(0) * weights[tk] for tk in returns_df.columns)
+                ptf_cumul = (1 + ptf_daily).cumprod()
+
+                # Align dates
+                if etf_ok:
+                    common_dates = ptf_cumul.index.intersection(etf_cumul.index)
+                    if len(common_dates) > 10:
+                        ptf_aligned = ptf_cumul.loc[common_dates]
+                        etf_aligned = etf_cumul.loc[common_dates]
+                    else:
+                        etf_ok = False
+
+                # Metrics calculation
+                trading_days = len(ptf_daily)
+                ann_factor = 252
+
+                ptf_total_return = round((ptf_cumul.iloc[-1] - 1) * 100, 2)
+                ptf_vol = round(ptf_daily.std() * np.sqrt(ann_factor) * 100, 2)
+                ptf_sharpe = round((ptf_daily.mean() / ptf_daily.std()) * np.sqrt(ann_factor), 2) if ptf_daily.std() > 0 else 0
+                ptf_max_dd = round((ptf_cumul / ptf_cumul.cummax() - 1).min() * 100, 2)
+
+                if etf_ok:
+                    etf_total_return = round((etf_cumul.iloc[-1] - 1) * 100, 2)
+                    etf_vol = round(etf_returns.std() * np.sqrt(ann_factor) * 100, 2)
+                    etf_sharpe = round((etf_returns.mean() / etf_returns.std()) * np.sqrt(ann_factor), 2) if etf_returns.std() > 0 else 0
+                    etf_max_dd = round((etf_cumul / etf_cumul.cummax() - 1).min() * 100, 2)
+                else:
+                    etf_total_return = "—"; etf_vol = "—"; etf_sharpe = "—"; etf_max_dd = "—"
+
+                # Display KPIs
+                ptf_color = "var(--sage)" if ptf_total_return > 0 else "var(--coral)"
+                etf_color = "var(--sage)" if etf_ok and etf_total_return > 0 else "var(--coral)" if etf_ok else "var(--stone)"
+
+                st.markdown(f"""<div class="kpis">
+                    <div class="kpi k-sage"><div class="kv">{len(stock_returns)}</div><div class="kl">Actions</div></div>
+                    <div class="kpi"><div class="kv" style="color:{ptf_color};">{ptf_total_return:+}%</div><div class="kl">Perf. Halal Quant</div></div>
+                    <div class="kpi"><div class="kv" style="color:{etf_color};">{f"{etf_total_return:+}%" if etf_ok else "—"}</div><div class="kl">Perf. MSCI Islamic</div></div>
+                    <div class="kpi"><div class="kv" style="color:var(--ink);">{ptf_vol}%</div><div class="kl">Vol. Portefeuille</div></div>
+                    <div class="kpi"><div class="kv" style="color:var(--ink);">{ptf_sharpe}</div><div class="kl">Sharpe Ratio</div></div>
+                    <div class="kpi k-coral"><div class="kv">{ptf_max_dd}%</div><div class="kl">Max Drawdown</div></div>
+                </div>""", unsafe_allow_html=True)
+
+                # Performance chart
+                st.markdown(f'<div class="sdiv"><div class="sdiv-dot d-sage"></div><h3>Performance cumulee</h3></div>', unsafe_allow_html=True)
+
+                chart_data = pd.DataFrame({"Halal Quant (Euronext)": ptf_cumul})
+                if etf_ok:
+                    chart_data["MSCI World Islamic"] = etf_aligned
+                chart_data = chart_data.dropna()
+                # Normalize to 100
+                for col in chart_data.columns:
+                    chart_data[col] = chart_data[col] / chart_data[col].iloc[0] * 100
+
+                st.line_chart(chart_data, use_container_width=True, height=400)
+                st.caption("Base 100 au debut de la periode. Source : Yahoo Finance.")
+
+                # Comparison table
+                st.markdown(f'<div class="sdiv"><div class="sdiv-dot d-sky"></div><h3>Comparaison detaillee</h3></div>', unsafe_allow_html=True)
+
+                comp_data = {
+                    "Metrique": ["Performance totale", "Volatilite annualisee", "Ratio de Sharpe", "Max Drawdown",
+                                 "Nb actions/composants", "Eligible PEA", "Frais annuels", "Purification"],
+                    "Halal Quant": [f"{ptf_total_return:+}%", f"{ptf_vol}%", f"{ptf_sharpe}", f"{ptf_max_dd}%",
+                                    f"{len(stock_returns)} actions", "Oui (Euronext)", "0€ (DIY)", "Calculee"],
+                    "MSCI World Islamic": [f"{etf_total_return}%" if etf_ok else "—",
+                                           f"{etf_vol}%" if etf_ok else "—",
+                                           f"{etf_sharpe}" if etf_ok else "—",
+                                           f"{etf_max_dd}%" if etf_ok else "—",
+                                           "~350 actions", "Non (CTO)", "0.30%/an", "Non incluse"],
+                }
+                st.dataframe(pd.DataFrame(comp_data), use_container_width=True, hide_index=True)
+
+                # Portfolio composition
+                st.markdown(f'<div class="sdiv"><div class="sdiv-dot d-honey"></div><h3>Composition du portefeuille benchmark</h3></div>', unsafe_allow_html=True)
+
+                ptf_comp = []
+                for tk in stock_returns.keys():
+                    row = conformes[conformes["Ticker"] == tk].iloc[0] if tk in conformes["Ticker"].values else None
+                    if row is not None:
+                        w = round(weights.get(tk, 0) * 100, 1)
+                        ret_tk = round((stock_returns[tk].add(1).prod() - 1) * 100, 2)
+                        ptf_comp.append({
+                            "Nom": row["Nom"], "Ticker": tk, "Score": row["Score"],
+                            "Poids (%)": w, "Perf. (%)": ret_tk,
+                            "Secteur": row["Secteur"]
+                        })
+                ptf_comp_df = pd.DataFrame(ptf_comp).sort_values("Poids (%)", ascending=False)
+                st.dataframe(ptf_comp_df, use_container_width=True, hide_index=True)
+
+                # Insight
+                if etf_ok and isinstance(etf_total_return, (int, float)):
+                    if ptf_total_return > etf_total_return:
+                        diff = round(ptf_total_return - etf_total_return, 2)
+                        st.markdown(f"""<div class="callout"><span class="callout-icon">🏆</span>
+                            <p><strong>Halal Quant surperforme de {diff} points</strong> le MSCI World Islamic sur cette periode.
+                            Le stock picking halal en PEA (0% de frais, eligible avantage fiscal) est une alternative credible aux ETF islamiques en CTO.</p>
+                        </div>""", unsafe_allow_html=True)
+                    else:
+                        diff = round(etf_total_return - ptf_total_return, 2)
+                        st.markdown(f"""<div class="callout"><span class="callout-icon">📊</span>
+                            <p><strong>Le MSCI World Islamic surperforme de {diff} points</strong> sur cette periode.
+                            Cependant, le portefeuille Halal Quant est 100% eligible PEA (avantage fiscal apres 5 ans) et sans frais de gestion,
+                            ce qui peut compenser l'ecart sur le long terme.</p>
+                        </div>""", unsafe_allow_html=True)
+
+                st.markdown(f"""<div class="callout"><span class="callout-icon">💡</span>
+                    <p><strong>Strategie optimale :</strong> Combiner un ETF MSCI World Islamic en CTO (exposition mondiale diversifiee)
+                    avec un portefeuille Halal Quant en PEA (avantage fiscal francais, 0% frais). Le meilleur des deux mondes.</p>
+                </div>""", unsafe_allow_html=True)
+
+                # Download
+                st.markdown("---")
+                st.download_button("📥  Rapport benchmark CSV",
+                    ptf_comp_df.to_csv(index=False).encode("utf-8"),
+                    f"benchmark_halal_{datetime.now().strftime('%Y%m%d')}.csv", "text/csv")
+
+    else:
+        st.markdown(f"""<div class="hero-empty" style="padding:2.5rem;">
+            <div class="hero-icon">⚡</div>
+            <p class="hero-title">Benchmark vs MSCI World Islamic</p>
+            <p class="hero-sub">Comparez la performance historique d'un portefeuille halal Euronext (stock picking PEA)<br>face au benchmark MSCI World Islamic (ETF CTO). Qui gagne ?</p>
+            <div class="hero-chips">
+                <span class="hero-chip">Performance cumulee</span>
+                <span class="hero-chip">Ratio de Sharpe</span>
+                <span class="hero-chip">Volatilite</span>
+                <span class="hero-chip">Max Drawdown</span>
+            </div>
+        </div>""", unsafe_allow_html=True)
+with t5:
     st.markdown('<p style="font-size:0.82rem;color:var(--ink-3);margin:0 0 10px;">Comparez les principaux ETF conformes Sharia disponibles sur le marche.</p>', unsafe_allow_html=True)
     cf1,cf2,cf3 = st.columns(3)
     with cf1: zf=st.multiselect("Zone geographique", sorted(set(e["z"] for e in ETF_ISL.values())), default=sorted(set(e["z"] for e in ETF_ISL.values())))
@@ -974,7 +1192,7 @@ with t4:
 
 
 # ── METHODOLOGIE ──
-with t5:
+with t6:
     st.markdown("### Comment fonctionne Halal Quant ?")
     st.markdown(f"""<p style="font-size:0.85rem;color:var(--ink-2);line-height:1.7;margin-bottom:1.5rem;">
         Halal Quant applique un pipeline sequentiel de <strong>10 niveaux de filtrage</strong> base sur les normes
