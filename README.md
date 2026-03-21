@@ -1,4 +1,8 @@
-# ☪️ Halal Quant — Screener Sharia Euronext Paris
+<p align="center">
+  <img src="assets/logo_full.png" alt="Halal Quant" width="400">
+</p>
+
+# Halal Quant — Screener Sharia Euronext Paris
 
 ![Python](https://img.shields.io/badge/Python-3.9+-3776AB?style=flat&logo=python&logoColor=white)
 ![Streamlit](https://img.shields.io/badge/Streamlit-1.30+-FF4B4B?style=flat&logo=streamlit&logoColor=white)
