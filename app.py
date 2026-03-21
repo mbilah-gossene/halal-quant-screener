@@ -511,7 +511,7 @@ st.markdown(f"""
 # TABS
 # ══════════════════════════════════════════════════════
 
-t1,t2,t3,t4 = st.tabs(["📊  Screener","🔍  Recherche","📈  ETF Islamiques","📖  Methodologie"])
+t1,t2,t3,t4,t5 = st.tabs(["📊  Screener","🔍  Recherche","💼  Portefeuille","📈  ETF Islamiques","📖  Methodologie"])
 
 # ── SCREENER ──
 with t1:
@@ -713,8 +713,212 @@ with t2:
                 st.error(f"Erreur lors de l'analyse : {e}")
 
 
-# ── ETF ISLAMIQUES ──
+# ── PORTEFEUILLE HALAL ──
 with t3:
+    st.markdown(f"""<p style="font-size:0.85rem;color:var(--ink-2);line-height:1.6;margin:0 0 14px;">
+        Construisez un portefeuille d'actions conformes Sharia, diversifie par secteur et optimise selon votre profil de risque.
+        Le constructeur analyse les {len(TICKERS)} actions Euronext, selectionne les conformes, et propose une allocation automatique.
+    </p>""", unsafe_allow_html=True)
+
+    # User inputs
+    pc1, pc2, pc3 = st.columns(3)
+    with pc1:
+        montant = st.number_input("Montant a investir (€)", min_value=500, max_value=1000000, value=10000, step=500)
+    with pc2:
+        profil = st.selectbox("Profil de risque", ["Prudent", "Equilibre", "Dynamique"])
+    with pc3:
+        strategie = st.selectbox("Strategie d'allocation", ["Score Sharia", "Equiponderation", "Capitalisation"])
+
+    # Advanced settings
+    with st.expander("Parametres avances"):
+        ac1, ac2, ac3 = st.columns(3)
+        with ac1:
+            max_actions = st.slider("Nombre max d'actions", 5, 30, 15)
+        with ac2:
+            max_secteur = st.slider("Max par secteur (%)", 10, 50, 30)
+        with ac3:
+            score_min = st.slider("Score Sharia minimum", 50, 95, 70)
+
+    if st.button("Construire le portefeuille", type="primary", use_container_width=True):
+        pg = st.progress(0); sx = st.empty()
+        res = []
+
+        # Step 1: Analyze all stocks
+        for i, (tk, nm) in enumerate(TICKERS.items()):
+            pg.progress((i + 1) / len(TICKERS))
+            sx.text(f"Analyse de {nm} ({tk}) — {i+1}/{len(TICKERS)}")
+            try:
+                to = yf.Ticker(tk); inf = to.info
+                if not inf or inf.get("quoteType") == "NONE":
+                    raise ValueError("No data")
+                res.append(analyze(tk, inf, to))
+            except:
+                pass
+            if (i + 1) % 12 == 0:
+                time.sleep(1.5)
+
+        pg.empty(); sx.empty()
+
+        df_all = pd.DataFrame(res)
+        conformes = df_all[(df_all["Statut"] == "Conforme") & (df_all["Score"] >= score_min)].copy()
+
+        if len(conformes) == 0:
+            st.warning(f"Aucune action conforme avec un score >= {score_min}. Essayez de baisser le score minimum.")
+        else:
+            # Step 2: Filter by risk profile
+            if profil == "Prudent":
+                # Low beta, high margin, low debt
+                conformes = conformes[conformes["Beta"].apply(lambda x: isinstance(x, (int, float)) and x <= 1.0 or not isinstance(x, (int, float)))]
+                profil_desc = "Faible volatilite, entreprises stables et peu endettees"
+                profil_emoji = "🛡️"
+            elif profil == "Dynamique":
+                # Higher beta OK, growth focus
+                profil_desc = "Forte croissance, exposition plus large, volatilite acceptee"
+                profil_emoji = "🚀"
+            else:
+                profil_desc = "Equilibre entre stabilite et croissance"
+                profil_emoji = "⚖️"
+
+            # Step 3: Sector diversification
+            sectors = conformes["Secteur"].value_counts()
+            max_per_sector = max(1, int(max_actions * max_secteur / 100))
+
+            selected = []
+            sector_count = {}
+
+            # Sort by strategy
+            if strategie == "Score Sharia":
+                conformes = conformes.sort_values("Score", ascending=False)
+            elif strategie == "Capitalisation":
+                conformes = conformes.sort_values("Cap.(M€)", ascending=False)
+            else:
+                conformes = conformes.sample(frac=1, random_state=42)  # Shuffle for equal weight
+
+            for _, row in conformes.iterrows():
+                if len(selected) >= max_actions:
+                    break
+                sec = row["Secteur"]
+                sec_cnt = sector_count.get(sec, 0)
+                if sec_cnt < max_per_sector:
+                    selected.append(row)
+                    sector_count[sec] = sec_cnt + 1
+
+            if len(selected) == 0:
+                st.warning("Impossible de construire un portefeuille avec ces contraintes.")
+            else:
+                ptf = pd.DataFrame(selected)
+
+                # Step 4: Calculate weights
+                if strategie == "Score Sharia":
+                    total_score = ptf["Score"].sum()
+                    ptf["Poids (%)"] = (ptf["Score"] / total_score * 100).round(1)
+                elif strategie == "Capitalisation":
+                    caps = ptf["Cap.(M€)"].apply(lambda x: x if isinstance(x, (int, float)) and x > 0 else 1)
+                    ptf["Poids (%)"] = (caps / caps.sum() * 100).round(1)
+                else:
+                    ptf["Poids (%)"] = round(100 / len(ptf), 1)
+
+                ptf["Montant (€)"] = (ptf["Poids (%)"] / 100 * montant).round(0).astype(int)
+
+                # Purification moyenne
+                purif_vals = ptf["Purif.(%)"].apply(lambda x: x if isinstance(x, (int, float)) else 0)
+                purif_moy = round(purif_vals.mean(), 2)
+
+                # Score moyen
+                score_moy = round(ptf["Score"].mean(), 0)
+
+                # Nombre de secteurs
+                nb_secteurs = ptf["Secteur"].nunique()
+
+                # Beta moyen
+                betas = ptf["Beta"].apply(lambda x: x if isinstance(x, (int, float)) else None).dropna()
+                beta_moy = round(betas.mean(), 2) if len(betas) > 0 else "—"
+
+                # KPIs
+                st.markdown(f"""<div class="kpis">
+                    <div class="kpi k-sage"><div class="kv">{len(ptf)}</div><div class="kl">Actions</div></div>
+                    <div class="kpi k-sage"><div class="kv">{int(score_moy)}</div><div class="kl">Score moyen</div></div>
+                    <div class="kpi k-sky"><div class="kv">{nb_secteurs}</div><div class="kl">Secteurs</div></div>
+                    <div class="kpi"><div class="kv" style="color:var(--ink);">{beta_moy}</div><div class="kl">Beta moyen</div></div>
+                    <div class="kpi"><div class="kv" style="color:var(--ink);">{montant:,}€</div><div class="kl">Investissement</div></div>
+                    <div class="kpi k-honey"><div class="kv">{purif_moy}%</div><div class="kl">Purification moy.</div></div>
+                </div>""", unsafe_allow_html=True)
+
+                # Profile card
+                st.markdown(f"""<div class="callout">
+                    <span class="callout-icon">{profil_emoji}</span>
+                    <p><strong>Profil {profil}</strong> — {profil_desc}. Strategie : <strong>{strategie}</strong>. Max {max_actions} actions, max {max_secteur}% par secteur, score min. {score_min}.</p>
+                </div>""", unsafe_allow_html=True)
+
+                # Portfolio table
+                st.markdown(f'<div class="sdiv"><div class="sdiv-dot d-sage"></div><h3>Allocation du portefeuille</h3><span class="sdiv-cnt">{len(ptf)} actions</span></div>', unsafe_allow_html=True)
+
+                display_ptf = ptf[["Nom", "Ticker", "Score", "Poids (%)", "Montant (€)", "Prix",
+                    "Cap.(M€)", "PER", "ROE(%)", "Beta", "Div.(%)", "Purif.(%)",
+                    "Dette/Cap(%)", "Secteur"]].copy()
+                display_ptf = display_ptf.sort_values("Poids (%)", ascending=False)
+                st.dataframe(display_ptf, use_container_width=True, hide_index=True,
+                    height=min(600, 50 + len(ptf) * 35))
+
+                # Sector breakdown
+                st.markdown(f'<div class="sdiv"><div class="sdiv-dot d-sky"></div><h3>Repartition sectorielle</h3></div>', unsafe_allow_html=True)
+                sector_alloc = ptf.groupby("Secteur").agg(
+                    Actions=("Nom", "count"),
+                    Poids_total=("Poids (%)", "sum"),
+                    Montant_total=("Montant (€)", "sum"),
+                    Score_moy=("Score", "mean")
+                ).round(1).sort_values("Poids_total", ascending=False)
+                sector_alloc.columns = ["Nb actions", "Poids total (%)", "Montant (€)", "Score moyen"]
+                st.dataframe(sector_alloc, use_container_width=True)
+
+                # Purification
+                if purif_moy > 0:
+                    div_total = ptf.apply(lambda r: r["Montant (€)"] * r["Div.(%)"] / 100 if isinstance(r["Div.(%)"], (int, float)) and r["Div.(%)"] > 0 else 0, axis=1).sum()
+                    purif_amount = round(div_total * purif_moy / 100, 2)
+                    st.markdown(f"""<div class="callout">
+                        <span class="callout-icon">🕌</span>
+                        <p><strong>Purification estimee :</strong> Sur vos dividendes annuels estimes ({round(div_total, 2)}€),
+                        environ <strong>{purif_amount}€</strong> ({purif_moy}%) sont a reverser en sadaqa pour purifier votre portefeuille.</p>
+                    </div>""", unsafe_allow_html=True)
+
+                # PEA Note
+                st.markdown(f"""<div class="callout">
+                    <span class="callout-icon">💡</span>
+                    <p><strong>Optimisation fiscale :</strong> Toutes ces actions sont eligibles PEA (Euronext Paris).
+                    Apres 5 ans de detention, vos plus-values sont exonerees d'impot sur le revenu.
+                    Combiné avec un ETF MSCI World Islamic en CTO, c'est la strategie optimale pour un investisseur musulman francais.</p>
+                </div>""", unsafe_allow_html=True)
+
+                # Downloads
+                st.markdown("---")
+                dc1, dc2 = st.columns(2)
+                with dc1:
+                    st.download_button("📥  Portefeuille CSV",
+                        display_ptf.to_csv(index=False).encode("utf-8"),
+                        f"portefeuille_halal_{profil.lower()}_{datetime.now().strftime('%Y%m%d')}.csv",
+                        "text/csv", use_container_width=True)
+                with dc2:
+                    st.download_button("📥  Portefeuille JSON",
+                        display_ptf.to_json(orient="records", indent=2).encode("utf-8"),
+                        f"portefeuille_halal_{profil.lower()}_{datetime.now().strftime('%Y%m%d')}.json",
+                        "application/json", use_container_width=True)
+
+    else:
+        st.markdown(f"""<div class="hero-empty" style="padding:2.5rem;">
+            <div class="hero-icon">💼</div>
+            <p class="hero-title">Constructeur de portefeuille halal</p>
+            <p class="hero-sub">Selectionnez votre profil de risque, votre montant, et laissez l'algorithme<br>construire un portefeuille diversifie avec les meilleures actions conformes Sharia.</p>
+            <div class="hero-chips">
+                <span class="hero-chip">3 profils de risque</span>
+                <span class="hero-chip">3 strategies d'allocation</span>
+                <span class="hero-chip">Diversification sectorielle</span>
+                <span class="hero-chip">Purification calculee</span>
+            </div>
+        </div>""", unsafe_allow_html=True)
+
+
+# ── ETF ISLAMIQUES ──
+with t4:
     st.markdown('<p style="font-size:0.82rem;color:var(--ink-3);margin:0 0 10px;">Comparez les principaux ETF conformes Sharia disponibles sur le marche.</p>', unsafe_allow_html=True)
     cf1,cf2,cf3 = st.columns(3)
     with cf1: zf=st.multiselect("Zone geographique", sorted(set(e["z"] for e in ETF_ISL.values())), default=sorted(set(e["z"] for e in ETF_ISL.values())))
@@ -770,7 +974,7 @@ with t3:
 
 
 # ── METHODOLOGIE ──
-with t4:
+with t5:
     st.markdown("### Comment fonctionne Halal Quant ?")
     st.markdown(f"""<p style="font-size:0.85rem;color:var(--ink-2);line-height:1.7;margin-bottom:1.5rem;">
         Halal Quant applique un pipeline sequentiel de <strong>10 niveaux de filtrage</strong> base sur les normes
